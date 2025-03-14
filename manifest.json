@@ -1,0 +1,21 @@
+{
+    "name": "MQTT Sensor Dashboard",
+    "short_name": "MQTT Dashboard",
+    "description": "Real-time Gas & Flame Sensor Dashboard with MQTT and PWA support.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#141e30",
+    "theme_color": "#ff5733",
+    "icons": [
+        {
+            "src": "icons/icon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/icon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}

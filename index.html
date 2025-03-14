@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MQTT Sensor Dashboard (with Graph & Logs)</title>
+    <link rel="manifest" href="manifest.json">
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Arial', sans-serif;
+        }
+
+        body {
+            background: linear-gradient(to right, #141e30, #243b55);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            text-align: center;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(15px);
+            width: 100%;
+            max-width: 1200px;
+            max-height: 95vh;
+            overflow: auto;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #ff8a00, #e52e71);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .sensor-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .sensor-card {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s;
+        }
+
+        canvas {
+            margin-top: 20px;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            max-height: 300px;
+        }
+
+        .log-container {
+            margin-top: 20px;
+            text-align: left;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 10px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+        }
+
+        @media (min-width: 768px) {
+            .sensor-container {
+                flex-direction: row;
+                justify-content: space-between;
+            }
+
+            .sensor-card {
+                width: 45%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>🔥 Real-Time Gas & Flame Dashboard (with Graph)</h1>
+
+        <div class="sensor-container">
+            <!-- Gas Sensor Section -->
+            <div class="sensor-card">
+                <h2>🛢 Gas Sensor</h2>
+                <p id="gas-value">Waiting...</p>
+                <p id="gas-alert" style="color: red; display: none;">⚠️ Gas Leak Detected!</p>
+            </div>
+
+            <!-- Flame Sensor Section -->
+            <div class="sensor-card">
+                <h2>🔥 Flame Sensor</h2>
+                <p id="flame-status">Waiting...</p>
+            </div>
+        </div>
+
+        <!-- Line Graph -->
+        <canvas id="sensorChart"></canvas>
+
+        <!-- Data Log Section -->
+        <div class="log-container" id="log-container">
+            <h3>📋 Event Logs</h3>
+            <div id="logs"></div>
+        </div>
+    </div>
+
+    <script>
+        const broker = "wss://broker.emqx.io:8084/mqtt";
+        const options = { connectTimeout: 4000 };
+        const client = mqtt.connect(broker, options);
+
+        const gasElement = document.getElementById("gas-value");
+        const gasAlert = document.getElementById("gas-alert");
+        const flameElement = document.getElementById("flame-status");
+        const logContainer = document.getElementById("logs");
+
+        let lastGasLogTime = 0;
+        let lastFlameLogTime = 0;
+        let flameDetected = false;
+
+        const ctx = document.getElementById('sensorChart').getContext('2d');
+        const sensorChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Gas Sensor', borderColor: '#ff5733', backgroundColor: 'rgba(255, 87, 51, 0.3)', data: [], tension: 0.3 },
+                    { label: 'Flame Sensor', borderColor: '#ffcc00', backgroundColor: 'rgba(255, 204, 0, 0.3)', data: [], tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { title: { display: true, text: 'Time' } },
+                    y: { title: { display: true, text: 'Sensor Value' }, min: 0, max: 9 }
+                }
+            }
+        });
+
+        function addLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `<div class="log-entry">[${timestamp}] ${message}</div>`;
+            logContainer.innerHTML = logEntry + logContainer.innerHTML;
+        }
+
+        function updateFlameStatus(isFire) {
+            if (isFire) {
+                flameElement.textContent = "🔥 Fire Detected!";
+                flameElement.style.color = "red";
+            } else {
+                flameElement.textContent = "No Fire";
+                flameElement.style.color = "lightgreen";
+            }
+        }
+
+        client.on("connect", () => {
+            client.subscribe("mrithull_/gas");
+            client.subscribe("mrithull_/flame");
+
+            setInterval(() => {
+                if (!flameDetected) {
+                    updateFlameStatus(false);
+                    sensorChart.data.datasets[1].data.push(0);
+                }
+                flameDetected = false;
+                sensorChart.update();
+            }, 2000);
+        });
+
+        client.on("message", (topic, message) => {
+            const value = parseFloat(message.toString().trim());
+            const now = Date.now();
+
+            // Helper function to limit data points
+            function limitDataPoints(chart, maxPoints = 30) {
+                if (chart.data.labels.length > maxPoints) {
+                    chart.data.labels.shift(); // Remove oldest label
+                    chart.data.datasets.forEach((dataset) => dataset.data.shift()); // Remove oldest data
+                }
+            }
+
+            if (topic === "mrithull_/gas") {
+                gasElement.textContent = value;
+                sensorChart.data.labels.push(new Date().toLocaleTimeString());
+                sensorChart.data.datasets[0].data.push(value);
+                limitDataPoints(sensorChart);
+                sensorChart.update();
+
+                if (value > 3 && now - lastGasLogTime >= 2000) {
+                    gasAlert.style.display = "block";
+                    addLog(`🚨 Gas Leak Detected! Value: ${value}`);
+                    lastGasLogTime = now;
+                } else if (value <= 3) {
+                    gasAlert.style.display = "none";
+                }
+            }
+
+            if (topic === "mrithull_/flame") {
+                flameDetected = true;
+                updateFlameStatus(true);
+                sensorChart.data.datasets[1].data.push(3);
+                limitDataPoints(sensorChart);
+                sensorChart.update();
+
+                if (now - lastFlameLogTime >= 2000) {
+                    addLog("🔥 Fire Detected!");
+                    lastFlameLogTime = now;
+                }
+            }
+        });
+
+    </script>
+
+</body>
+
+</html>
